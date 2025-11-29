@@ -14,7 +14,8 @@
         android:layout_height="match_parent"
         app:use_controller="true"
         app:show_timeout="3000"
-        android:keepScreenOn="true">
+        android:keepScreenOn="true"
+        android:background="@color/black">
     </androidx.media3.ui.PlayerView>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

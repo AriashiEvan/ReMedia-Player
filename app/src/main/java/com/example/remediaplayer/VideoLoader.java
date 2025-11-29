@@ -1,4 +1,5 @@
 package com.example.remediaplayer;
+
 import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
@@ -8,40 +9,42 @@ import java.util.ArrayList;
 
 public class VideoLoader {
 
-    public static ArrayList<VideoItem> loadVideos(Context context) {
+    public static ArrayList<VideoItem> loadVideos(Context ctx) {
 
         ArrayList<VideoItem> list = new ArrayList<>();
 
         Uri uri = MediaStore.Video.Media.EXTERNAL_CONTENT_URI;
 
-        String[] proj = {
-                MediaStore.Video.Media.DATA,
+        String[] projection = {
+                MediaStore.Video.Media._ID,
                 MediaStore.Video.Media.TITLE,
+                MediaStore.Video.Media.DATA,
                 MediaStore.Video.Media.DURATION,
                 MediaStore.Video.Media.SIZE,
                 MediaStore.Video.Media.DATE_MODIFIED
         };
 
-        Cursor c = context.getContentResolver().query(
+        Cursor cursor = ctx.getContentResolver().query(
                 uri,
-                proj,
+                projection,
                 null,
                 null,
                 MediaStore.Video.Media.DATE_MODIFIED + " DESC"
         );
 
-        if (c != null) {
-            while (c.moveToNext()) {
+        if (cursor != null) {
+            while (cursor.moveToNext()) {
 
-                String path = c.getString(0);
-                String title = c.getString(1);
-                long duration = c.getLong(2);
-                long size = c.getLong(3);
-                long date = c.getLong(4);
+                long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID));
+                String title = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.TITLE));
+                String path = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATA));
+                long duration = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION));
+                long size = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE));
+                long modified = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_MODIFIED));
 
-                list.add(new VideoItem(path, title, duration, size, date));
+                list.add(new VideoItem(id, title, path, duration, size, modified));
             }
-            c.close();
+            cursor.close();
         }
 
         return list;

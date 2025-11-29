@@ -6,6 +6,9 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Rational;
+import android.view.View;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.widget.ImageButton;
 import android.widget.TextView;
 
@@ -17,52 +20,77 @@ import androidx.media3.ui.PlayerView;
 
 import java.io.File;
 
+/** @noinspection ALL*/
 public class VideoPlayerView extends AppCompatActivity {
 
-    private PlayerView playerView;
-    private ExoPlayer player;
+    PlayerView playerView;
+    ExoPlayer player;
 
-    private ImageButton backBtn, fullBtn, pipBtn;
-    private TextView fileNameText;
+    ImageButton backBtn, fullBtn, pipBtn;
+    TextView fileNameText;
 
-    private boolean isFullscreen = false;
+    boolean isFullscreen = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_video_player_view);
 
-        String videoPath = getIntent().getStringExtra("video_path");
+        String path = getIntent().getStringExtra("video_path");
 
-        // Bind views
         playerView = findViewById(R.id.playerview);
         backBtn = playerView.findViewById(R.id.back_icon);
         fullBtn = playerView.findViewById(R.id.fullscreen);
         pipBtn = playerView.findViewById(R.id.exo_pip);
         fileNameText = playerView.findViewById(R.id.File_name);
 
-        // Set file name
-        fileNameText.setText(new File(videoPath).getName());
+        fileNameText.setText(new File(path).getName());
 
-        // Init player
-        initPlayer(videoPath);
+        initPlayer(path);
+        enableImmersiveMode();
 
-        // Back button
         backBtn.setOnClickListener(v -> onBackPressed());
 
-        // Fullscreen toggle
         fullBtn.setOnClickListener(v -> toggleFullscreen());
 
-        // Picture-in-Picture
-        pipBtn.setOnClickListener(v -> enterPipModeSafe());
+        pipBtn.setOnClickListener(v -> enterPipSafe());
+    }
+
+    private void enableImmersiveMode() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            getWindow().setDecorFitsSystemWindows(false);
+
+            WindowInsetsController controller = getWindow().getInsetsController();
+            if (controller != null) {
+                controller.hide(WindowInsets.Type.systemBars());
+                controller.setSystemBarsBehavior(
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                );
+            }
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            );
+        }
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) enableImmersiveMode();
     }
 
     private void initPlayer(String path) {
         player = new ExoPlayer.Builder(this).build();
         playerView.setPlayer(player);
 
-        MediaItem mediaItem = MediaItem.fromUri(Uri.fromFile(new File(path)));
-        player.setMediaItem(mediaItem);
+        MediaItem item = MediaItem.fromUri(Uri.fromFile(new File(path)));
+        player.setMediaItem(item);
         player.prepare();
         player.play();
     }
@@ -77,18 +105,15 @@ public class VideoPlayerView extends AppCompatActivity {
         }
     }
 
-    private void enterPipModeSafe() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            enterPipMode();
-        }
+    private void enterPipSafe() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) enterPiP();
     }
 
     @RequiresApi(api = Build.VERSION_CODES.O)
-    private void enterPipMode() {
-        Rational aspectRatio = new Rational(playerView.getWidth(), playerView.getHeight());
+    private void enterPiP() {
         PictureInPictureParams params =
                 new PictureInPictureParams.Builder()
-                        .setAspectRatio(aspectRatio)
+                        .setAspectRatio(new Rational(16, 9))
                         .build();
         enterPictureInPictureMode(params);
     }
@@ -96,7 +121,7 @@ public class VideoPlayerView extends AppCompatActivity {
     @Override
     protected void onStop() {
         super.onStop();
-        if (!isInPictureInPictureMode() && player != null) {
+        if (!isInPictureInPictureMode()) {
             player.pause();
         }
     }
@@ -104,6 +129,6 @@ public class VideoPlayerView extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (player != null) player.release();
+        player.release();
     }
 }
