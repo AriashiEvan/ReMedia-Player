@@ -2,7 +2,7 @@ package com.example.remediaplayer;
 
 public class VideoItem {
 
-    private long id;          // REQUIRED for delete/rename
+    private long id;
     private String title;
     private String filePath;
     private long duration;

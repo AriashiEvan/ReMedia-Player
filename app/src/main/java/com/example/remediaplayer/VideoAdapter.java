@@ -1,8 +1,9 @@
 package com.example.remediaplayer;
 
+import android.annotation.SuppressLint;
 import android.app.AlertDialog;
+import android.app.PendingIntent;
 import android.content.ContentUris;
-import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -15,6 +16,8 @@ import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.IntentSenderRequest;
+import androidx.activity.result.ActivityResultLauncher;
 import androidx.annotation.NonNull;
 import androidx.core.content.FileProvider;
 import androidx.recyclerview.widget.RecyclerView;
@@ -24,6 +27,7 @@ import com.bumptech.glide.Glide;
 import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 
 public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
@@ -31,11 +35,14 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
     Context ctx;
     ArrayList<VideoItem> videos;
     ArrayList<VideoItem> filteredList;
+    ActivityResultLauncher<IntentSenderRequest> writeLauncher;
 
-    public VideoAdapter(Context ctx, ArrayList<VideoItem> videos) {
+    public VideoAdapter(Context ctx, ArrayList<VideoItem> videos,
+                        ActivityResultLauncher<IntentSenderRequest> launcher) {
         this.ctx = ctx;
         this.videos = videos;
         this.filteredList = new ArrayList<>(videos);
+        this.writeLauncher = launcher;
     }
 
     @NonNull
@@ -72,96 +79,72 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
         return filteredList.size();
     }
 
-    // ------------------------------------------------------------
-    // MORE OPTIONS DIALOG
-    // ------------------------------------------------------------
     private void showMoreOptions(VideoItem v) {
-
         String[] options = {"Play", "Share", "Delete", "Rename", "Details"};
 
-        AlertDialog.Builder builder = new AlertDialog.Builder(ctx);
-        builder.setTitle(v.getTitle());
-        builder.setItems(options, (dialog, which) -> {
-
-            switch (which) {
+        AlertDialog.Builder b = new AlertDialog.Builder(ctx);
+        b.setTitle(v.getTitle());
+        b.setItems(options, (d, w) -> {
+            switch (w) {
                 case 0: playVideo(v); break;
                 case 1: shareVideo(v); break;
-                case 2: deleteVideo(v); break;
-                case 3: renameVideo(v); break;
+                case 2: requestDelete(v); break;
+                case 3: requestRename(v); break;
                 case 4: showDetails(v); break;
             }
-
         });
-
-        builder.show();
+        b.show();
     }
 
-    // ------------------------------------------------------------
-    // PLAY VIDEO
-    // ------------------------------------------------------------
     private void playVideo(VideoItem v) {
         Intent i = new Intent(ctx, VideoPlayerView.class);
         i.putExtra("video_path", v.getFilePath());
         ctx.startActivity(i);
     }
 
-    // ------------------------------------------------------------
-    // SHARE VIDEO
-    // ------------------------------------------------------------
     private void shareVideo(VideoItem v) {
         try {
             File file = new File(v.getFilePath());
             Uri uri = FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".provider", file);
 
-            Intent intent = new Intent(Intent.ACTION_SEND);
-            intent.setType("video/*");
-            intent.putExtra(Intent.EXTRA_STREAM, uri);
-            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            Intent i = new Intent(Intent.ACTION_SEND);
+            i.setType("video/*");
+            i.putExtra(Intent.EXTRA_STREAM, uri);
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
 
-            ctx.startActivity(Intent.createChooser(intent, "Share Video"));
-
+            ctx.startActivity(Intent.createChooser(i, "Share Video"));
         } catch (Exception e) {
             Toast.makeText(ctx, "Share failed", Toast.LENGTH_SHORT).show();
         }
     }
 
-    // ------------------------------------------------------------
-    // DELETE VIDEO (MediaStore safe)
-    // ------------------------------------------------------------
-    private void deleteVideo(VideoItem v) {
+    private void requestDelete(VideoItem v) {
 
-        Uri videoUri = ContentUris.withAppendedId(
+        Uri mediaUri = ContentUris.withAppendedId(
                 MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
                 v.getId()
         );
 
-        AlertDialog.Builder confirm = new AlertDialog.Builder(ctx);
-        confirm.setTitle("Delete Video?");
-        confirm.setMessage("This action cannot be undone.");
+        ((MainActivity)ctx).pendingModifyUri = mediaUri;
+        ((MainActivity)ctx).pendingAction = 1;
 
-        confirm.setPositiveButton("Delete", (dialog, which) -> {
+        try {
+            PendingIntent pi = MediaStore.createWriteRequest(
+                    ctx.getContentResolver(),
+                    Collections.singletonList(mediaUri)
+            );
 
-            int rows = ctx.getContentResolver().delete(videoUri, null, null);
+            IntentSenderRequest req = new IntentSenderRequest.Builder(pi.getIntentSender()).build();
+            writeLauncher.launch(req);
 
-            if (rows > 0) {
-                videos.remove(v);
-                filteredList.remove(v);
-                notifyDataSetChanged();
-                Toast.makeText(ctx, "Deleted", Toast.LENGTH_SHORT).show();
-            } else {
-                Toast.makeText(ctx, "Failed to delete", Toast.LENGTH_SHORT).show();
-            }
-        });
-
-        confirm.setNegativeButton("Cancel", null);
-        confirm.show();
+        } catch (Exception e) {
+            Toast.makeText(ctx, "Unable to delete", Toast.LENGTH_SHORT).show();
+        }
     }
 
-    // ------------------------------------------------------------
-    // RENAME VIDEO (MediaStore safe)
-    // ------------------------------------------------------------
-    private void renameVideo(VideoItem v) {
+    private void requestRename(VideoItem v) {
 
+        // Name dialog
         AlertDialog.Builder dialog = new AlertDialog.Builder(ctx);
         dialog.setTitle("Rename Video");
 
@@ -178,32 +161,34 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
                 return;
             }
 
-            Uri videoUri = ContentUris.withAppendedId(
+            Uri mediaUri = ContentUris.withAppendedId(
                     MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
                     v.getId()
             );
 
-            ContentValues values = new ContentValues();
-            values.put(MediaStore.Video.Media.DISPLAY_NAME, newName + ".mp4");
+            ((MainActivity)ctx).pendingModifyUri = mediaUri;
+            ((MainActivity)ctx).pendingAction = 2;
+            ((MainActivity)ctx).pendingNewName = newName;
 
-            int rows = ctx.getContentResolver().update(videoUri, values, null, null);
+            try {
+                PendingIntent pi = MediaStore.createWriteRequest(
+                        ctx.getContentResolver(),
+                        Collections.singletonList(mediaUri)
+                );
 
-            if (rows > 0) {
-                v.setTitle(newName);
-                notifyDataSetChanged();
-                Toast.makeText(ctx, "Renamed", Toast.LENGTH_SHORT).show();
-            } else {
+                IntentSenderRequest req = new IntentSenderRequest.Builder(pi.getIntentSender()).build();
+                writeLauncher.launch(req);
+
+            } catch (Exception e) {
                 Toast.makeText(ctx, "Rename failed", Toast.LENGTH_SHORT).show();
             }
+
         });
 
         dialog.setNegativeButton("Cancel", null);
         dialog.show();
     }
 
-    // ------------------------------------------------------------
-    // DETAILS
-    // ------------------------------------------------------------
     private void showDetails(VideoItem v) {
 
         String msg =
@@ -220,33 +205,22 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
                 .show();
     }
 
-    // ------------------------------------------------------------
-    // SEARCH FILTER
-    // ------------------------------------------------------------
     public int filter(String text) {
         text = text.toLowerCase();
 
         filteredList.clear();
-
-        if (text.isEmpty()) {
-            filteredList.addAll(videos);
-        } else {
-            for (VideoItem v : videos) {
-                if (v.getTitle().toLowerCase().contains(text)) {
+        if (text.isEmpty()) filteredList.addAll(videos);
+        else {
+            for (VideoItem v : videos)
+                if (v.getTitle().toLowerCase().contains(text))
                     filteredList.add(v);
-                }
-            }
         }
 
         notifyDataSetChanged();
         return filteredList.size();
     }
 
-    // ------------------------------------------------------------
-    // HOLDER CLASS
-    // ------------------------------------------------------------
     class Holder extends RecyclerView.ViewHolder {
-
         ImageView thumbnail;
         TextView videoName, videoSize, videoDate, videoDuration;
         ImageButton btnMoreOptions;
@@ -263,9 +237,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
         }
     }
 
-    // ------------------------------------------------------------
-    // HELPERS
-    // ------------------------------------------------------------
+    @SuppressLint("DefaultLocale")
     private String formatDuration(long ms) {
         long sec = ms / 1000;
         long min = sec / 60;
@@ -273,10 +245,11 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
         return String.format("%02d:%02d", min, rem);
     }
 
-    private String formatSize(long sizeBytes) {
-        return (sizeBytes / (1024 * 1024)) + " MB";
+    private String formatSize(long size) {
+        return (size / (1024 * 1024)) + " MB";
     }
 
+    @SuppressLint("SimpleDateFormat")
     private String formatDate(long unix) {
         return new SimpleDateFormat("dd MMM yyyy").format(new Date(unix * 1000));
     }
