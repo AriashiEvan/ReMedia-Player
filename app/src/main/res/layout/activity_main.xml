@@ -4,7 +4,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#111111"
+    android:background="@color/app_background"
     tools:context=".MainActivity">
 
     <androidx.constraintlayout.widget.ConstraintLayout
@@ -30,7 +30,7 @@
                 android:layout_height="45dp"
                 android:background="@android:color/transparent"
                 android:src="@drawable/baseline_menu_24"
-                app:tint="@color/white" />
+                app:tint="@color/app_text" />
 
             <SearchView
                 android:id="@+id/searchbar"
@@ -48,7 +48,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="0 videos"
-            android:textColor="#CCCCCC"
+            android:textColor="@color/app_text"
             android:textSize="14sp"
             android:layout_marginStart="14dp"
             android:layout_marginTop="6dp"

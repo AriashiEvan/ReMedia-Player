@@ -61,9 +61,7 @@ public class VideoLoader {
                         cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_MODIFIED)
                 );
 
-                String title = displayName;
-
-                list.add(new VideoItem(id, title, path, duration, size, modified));
+                list.add(new VideoItem(id, displayName, path, duration, size, modified));
             }
 
             cursor.close();

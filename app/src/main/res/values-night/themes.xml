@@ -1,5 +1,9 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
+    <color name="app_background">#000000</color>
+    <color name="app_text">#FFFFFF</color>
+
+
     <style name="Base.Theme.ReMediaPlayer" parent="Theme.Material3.DayNight.NoActionBar">
         <!-- Customize your dark theme here. -->
         <!-- <item name="colorPrimary">@color/my_dark_primary</item> -->

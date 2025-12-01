@@ -1,6 +1,5 @@
 package com.example.remediaplayer;
 
-import android.annotation.SuppressLint;
 import android.app.AlertDialog;
 import android.app.PendingIntent;
 import android.content.ContentUris;
@@ -16,8 +15,8 @@ import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.activity.result.IntentSenderRequest;
 import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.IntentSenderRequest;
 import androidx.annotation.NonNull;
 import androidx.core.content.FileProvider;
 import androidx.recyclerview.widget.RecyclerView;
@@ -35,12 +34,14 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
     Context ctx;
     ArrayList<VideoItem> videos;
     ArrayList<VideoItem> filteredList;
+
     ActivityResultLauncher<IntentSenderRequest> writeLauncher;
 
     public VideoAdapter(Context ctx, ArrayList<VideoItem> videos,
                         ActivityResultLauncher<IntentSenderRequest> launcher) {
+
         this.ctx = ctx;
-        this.videos = videos;
+        this.videos = new ArrayList<>(videos);
         this.filteredList = new ArrayList<>(videos);
         this.writeLauncher = launcher;
     }
@@ -80,19 +81,36 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
     }
 
     private void showMoreOptions(VideoItem v) {
+
         String[] options = {"Play", "Share", "Delete", "Rename", "Details"};
 
         AlertDialog.Builder b = new AlertDialog.Builder(ctx);
         b.setTitle(v.getTitle());
-        b.setItems(options, (d, w) -> {
-            switch (w) {
-                case 0: playVideo(v); break;
-                case 1: shareVideo(v); break;
-                case 2: requestDelete(v); break;
-                case 3: requestRename(v); break;
-                case 4: showDetails(v); break;
+        b.setItems(options, (dialog, which) -> {
+
+            switch (which) {
+                case 0:
+                    playVideo(v);
+                    break;
+
+                case 1:
+                    shareVideo(v);
+                    break;
+
+                case 2:
+                    requestDelete(v);
+                    break;
+
+                case 3:
+                    requestRename(v);
+                    break;
+
+                case 4:
+                    showDetails(v);
+                    break;
             }
         });
+
         b.show();
     }
 
@@ -103,18 +121,25 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
     }
 
     private void shareVideo(VideoItem v) {
+
         try {
             File file = new File(v.getFilePath());
-            Uri uri = FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".provider", file);
 
-            Intent i = new Intent(Intent.ACTION_SEND);
-            i.setType("video/*");
-            i.putExtra(Intent.EXTRA_STREAM, uri);
-            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            Uri uri = FileProvider.getUriForFile(
+                    ctx,
+                    ctx.getPackageName() + ".provider",
+                    file
+            );
 
-            ctx.startActivity(Intent.createChooser(i, "Share Video"));
+            Intent shareIntent = new Intent(Intent.ACTION_SEND);
+            shareIntent.setType("video/*");
+            shareIntent.putExtra(Intent.EXTRA_STREAM, uri);
+            shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+            ctx.startActivity(Intent.createChooser(shareIntent, "Share Video"));
+
         } catch (Exception e) {
-            Toast.makeText(ctx, "Share failed", Toast.LENGTH_SHORT).show();
+            Toast.makeText(ctx, "Unable to share video", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -125,8 +150,8 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
                 v.getId()
         );
 
-        ((MainActivity)ctx).pendingModifyUri = mediaUri;
-        ((MainActivity)ctx).pendingAction = 1;
+        ((MainActivity) ctx).pendingModifyUri = mediaUri;
+        ((MainActivity) ctx).pendingAction = 1;
 
         try {
             PendingIntent pi = MediaStore.createWriteRequest(
@@ -138,13 +163,12 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
             writeLauncher.launch(req);
 
         } catch (Exception e) {
-            Toast.makeText(ctx, "Unable to delete", Toast.LENGTH_SHORT).show();
+            Toast.makeText(ctx, "Delete failed", Toast.LENGTH_SHORT).show();
         }
     }
 
     private void requestRename(VideoItem v) {
 
-        // Name dialog
         AlertDialog.Builder dialog = new AlertDialog.Builder(ctx);
         dialog.setTitle("Rename Video");
 
@@ -156,6 +180,7 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
         dialog.setPositiveButton("Rename", (d, w) -> {
 
             String newName = input.getText().toString().trim();
+
             if (newName.isEmpty()) {
                 Toast.makeText(ctx, "Invalid name", Toast.LENGTH_SHORT).show();
                 return;
@@ -166,9 +191,9 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
                     v.getId()
             );
 
-            ((MainActivity)ctx).pendingModifyUri = mediaUri;
-            ((MainActivity)ctx).pendingAction = 2;
-            ((MainActivity)ctx).pendingNewName = newName;
+            ((MainActivity) ctx).pendingModifyUri = mediaUri;
+            ((MainActivity) ctx).pendingAction = 2;
+            ((MainActivity) ctx).pendingNewName = newName;
 
             try {
                 PendingIntent pi = MediaStore.createWriteRequest(
@@ -206,20 +231,33 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
     }
 
     public int filter(String text) {
-        text = text.toLowerCase();
 
+        text = text.toLowerCase();
         filteredList.clear();
-        if (text.isEmpty()) filteredList.addAll(videos);
-        else {
-            for (VideoItem v : videos)
-                if (v.getTitle().toLowerCase().contains(text))
+
+        if (text.isEmpty()) {
+            filteredList.addAll(videos);
+        } else {
+            for (VideoItem v : videos) {
+                if (v.getTitle().toLowerCase().contains(text)) {
                     filteredList.add(v);
+                }
+            }
         }
 
         notifyDataSetChanged();
         return filteredList.size();
     }
 
+    public void updateList(ArrayList<VideoItem> newList) {
+        videos = new ArrayList<>(newList);
+        filteredList = new ArrayList<>(newList);
+        notifyDataSetChanged();
+    }
+
+    // -------------------------------------------------------------------------
+    // HOLDER
+    // -------------------------------------------------------------------------
     class Holder extends RecyclerView.ViewHolder {
         ImageView thumbnail;
         TextView videoName, videoSize, videoDate, videoDuration;
@@ -237,7 +275,6 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
         }
     }
 
-    @SuppressLint("DefaultLocale")
     private String formatDuration(long ms) {
         long sec = ms / 1000;
         long min = sec / 60;
@@ -245,11 +282,10 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
         return String.format("%02d:%02d", min, rem);
     }
 
-    private String formatSize(long size) {
-        return (size / (1024 * 1024)) + " MB";
+    private String formatSize(long bytes) {
+        return (bytes / (1024 * 1024)) + " MB";
     }
 
-    @SuppressLint("SimpleDateFormat")
     private String formatDate(long unix) {
         return new SimpleDateFormat("dd MMM yyyy").format(new Date(unix * 1000));
     }

@@ -92,7 +92,12 @@ public class VideoPlayerView extends AppCompatActivity {
         MediaItem item = MediaItem.fromUri(Uri.fromFile(new File(path)));
         player.setMediaItem(item);
         player.prepare();
-        player.play();
+        boolean autoPlay = getSharedPreferences("settings", MODE_PRIVATE)
+                .getBoolean("auto_play", true);
+
+        if (autoPlay)
+            player.play();
+
     }
 
     private void toggleFullscreen() {
