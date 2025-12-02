@@ -41,6 +41,16 @@
                 android:queryHint="Search videos..."
                 android:background="@android:color/transparent" />
 
+            <Switch
+                android:id="@+id/switchSource"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:text="Online"
+                app:tint="@color/app_background"
+                tools:ignore="UseSwitchCompatOrMaterialXml"
+                android:textColor="@color/app_text"/>
+
+
         </LinearLayout>
 
         <TextView

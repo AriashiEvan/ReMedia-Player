@@ -48,6 +48,7 @@ public class SettingsActivity extends AppCompatActivity {
 
     }
 
+
     private void loadSettings() {
         autoPlaySwitch.setChecked(prefs.getBoolean("auto_play", true));
         hideUiSwitch.setChecked(prefs.getBoolean("hide_ui", true));

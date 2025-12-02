@@ -1,292 +1,172 @@
 package com.example.remediaplayer;
 
 import android.app.AlertDialog;
-import android.app.PendingIntent;
-import android.content.ContentUris;
 import android.content.Context;
-import android.content.Intent;
-import android.net.Uri;
-import android.provider.MediaStore;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageButton;
 import android.widget.ImageView;
+import android.widget.PopupMenu;
 import android.widget.TextView;
-import android.widget.Toast;
 
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.IntentSenderRequest;
 import androidx.annotation.NonNull;
-import androidx.core.content.FileProvider;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.bumptech.glide.Glide;
 
-import java.io.File;
+import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Date;
+import java.util.Locale;
 
 public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
 
-    Context ctx;
-    ArrayList<VideoItem> videos;
-    ArrayList<VideoItem> filteredList;
+    private Context ctx;
+    private ArrayList<VideoItem> list;
+    private VideoActionListener listener;
 
-    ActivityResultLauncher<IntentSenderRequest> writeLauncher;
-
-    public VideoAdapter(Context ctx, ArrayList<VideoItem> videos,
-                        ActivityResultLauncher<IntentSenderRequest> launcher) {
-
+    public VideoAdapter(Context ctx, ArrayList<VideoItem> list, VideoActionListener listener) {
         this.ctx = ctx;
-        this.videos = new ArrayList<>(videos);
-        this.filteredList = new ArrayList<>(videos);
-        this.writeLauncher = launcher;
+        this.list = list;
+        this.listener = listener;
+    }
+
+    public void updateList(ArrayList<VideoItem> newList) {
+        this.list = newList;
+        notifyDataSetChanged();
+    }
+
+    public int filter(String q) {
+        if (q == null || q.trim().isEmpty()) return list.size();
+
+        q = q.toLowerCase(Locale.ROOT);
+        ArrayList<VideoItem> filtered = new ArrayList<>();
+
+        for (VideoItem v : list) {
+            if (v.getTitle().toLowerCase(Locale.ROOT).contains(q))
+                filtered.add(v);
+        }
+
+        this.list = filtered;
+        notifyDataSetChanged();
+        return filtered.size();
     }
 
     @NonNull
     @Override
-    public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-        return new Holder(LayoutInflater.from(ctx).inflate(R.layout.video_item, parent, false));
+    public Holder onCreateViewHolder(@NonNull ViewGroup p, int vType) {
+        View v = LayoutInflater.from(ctx).inflate(R.layout.video_item, p, false);
+        return new Holder(v);
     }
 
     @Override
     public void onBindViewHolder(@NonNull Holder h, int pos) {
+        VideoItem v = list.get(pos);
 
-        VideoItem v = filteredList.get(pos);
-
-        h.videoName.setText(v.getTitle());
-        h.videoSize.setText(formatSize(v.getSize()));
-        h.videoDate.setText("Modified: " + formatDate(v.getDateModified()));
-        h.videoDuration.setText(formatDuration(v.getDuration()));
+        h.title.setText(v.getTitle());
+        h.size.setText(formatFileSize(v.getSize()));
+        h.duration.setText(v.getDurationFormatted());
+        h.date.setText(formatDate(v.getDateModified()));
 
         Glide.with(ctx)
-                .load(Uri.fromFile(new File(v.getFilePath())))
+                .load(v.getThumbnail())
+                .placeholder(R.drawable.thumbnail_placeholder)
                 .into(h.thumbnail);
 
-        h.itemView.setOnClickListener(view -> {
-            Intent i = new Intent(ctx, VideoPlayerView.class);
-            i.putExtra("video_path", v.getFilePath());
-            ctx.startActivity(i);
-        });
-
-        h.btnMoreOptions.setOnClickListener(view -> showMoreOptions(v));
+        h.itemView.setOnClickListener(x -> listener.onPlay(v));
+        h.menuBtn.setOnClickListener(btn -> showMenu(btn, v));
     }
 
     @Override
     public int getItemCount() {
-        return filteredList.size();
+        return list.size();
     }
 
-    private void showMoreOptions(VideoItem v) {
+    private void showMenu(View view, VideoItem v) {
+        PopupMenu menu = new PopupMenu(ctx, view);
+        menu.inflate(R.menu.video_options);
 
-        String[] options = {"Play", "Share", "Delete", "Rename", "Details"};
+        menu.setOnMenuItemClickListener(item -> {
+            int id = item.getItemId();
 
-        AlertDialog.Builder b = new AlertDialog.Builder(ctx);
-        b.setTitle(v.getTitle());
-        b.setItems(options, (dialog, which) -> {
+            if (id == R.id.optPlay) listener.onPlay(v);
+            else if (id == R.id.optShare) listener.onShare(v);
+            else if (id == R.id.optRename) renameDialog(v);
+            else if (id == R.id.optDelete) deleteDialog(v);
 
-            switch (which) {
-                case 0:
-                    playVideo(v);
-                    break;
-
-                case 1:
-                    shareVideo(v);
-                    break;
-
-                case 2:
-                    requestDelete(v);
-                    break;
-
-                case 3:
-                    requestRename(v);
-                    break;
-
-                case 4:
-                    showDetails(v);
-                    break;
-            }
+            return true;
         });
 
-        b.show();
+        menu.show();
     }
 
-    private void playVideo(VideoItem v) {
-        Intent i = new Intent(ctx, VideoPlayerView.class);
-        i.putExtra("video_path", v.getFilePath());
-        ctx.startActivity(i);
-    }
+    private void renameDialog(VideoItem v) {
 
-    private void shareVideo(VideoItem v) {
-
-        try {
-            File file = new File(v.getFilePath());
-
-            Uri uri = FileProvider.getUriForFile(
-                    ctx,
-                    ctx.getPackageName() + ".provider",
-                    file
-            );
-
-            Intent shareIntent = new Intent(Intent.ACTION_SEND);
-            shareIntent.setType("video/*");
-            shareIntent.putExtra(Intent.EXTRA_STREAM, uri);
-            shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-
-            ctx.startActivity(Intent.createChooser(shareIntent, "Share Video"));
-
-        } catch (Exception e) {
-            Toast.makeText(ctx, "Unable to share video", Toast.LENGTH_SHORT).show();
+        if (!v.isLocal()) {
+            toast("Cannot rename online videos.");
+            return;
         }
-    }
 
-    private void requestDelete(VideoItem v) {
-
-        Uri mediaUri = ContentUris.withAppendedId(
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                v.getId()
-        );
-
-        ((MainActivity) ctx).pendingModifyUri = mediaUri;
-        ((MainActivity) ctx).pendingAction = 1;
-
-        try {
-            PendingIntent pi = MediaStore.createWriteRequest(
-                    ctx.getContentResolver(),
-                    Collections.singletonList(mediaUri)
-            );
-
-            IntentSenderRequest req = new IntentSenderRequest.Builder(pi.getIntentSender()).build();
-            writeLauncher.launch(req);
-
-        } catch (Exception e) {
-            Toast.makeText(ctx, "Delete failed", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    private void requestRename(VideoItem v) {
-
-        AlertDialog.Builder dialog = new AlertDialog.Builder(ctx);
-        dialog.setTitle("Rename Video");
-
-        View view = LayoutInflater.from(ctx).inflate(R.layout.dialog_rename, null);
-        TextView input = view.findViewById(R.id.rename_input);
+        View dialog = LayoutInflater.from(ctx).inflate(R.layout.dialog_rename, null);
+        TextView input = dialog.findViewById(R.id.rename_input);
         input.setText(v.getTitle());
-        dialog.setView(view);
-
-        dialog.setPositiveButton("Rename", (d, w) -> {
-
-            String newName = input.getText().toString().trim();
-
-            if (newName.isEmpty()) {
-                Toast.makeText(ctx, "Invalid name", Toast.LENGTH_SHORT).show();
-                return;
-            }
-
-            Uri mediaUri = ContentUris.withAppendedId(
-                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                    v.getId()
-            );
-
-            ((MainActivity) ctx).pendingModifyUri = mediaUri;
-            ((MainActivity) ctx).pendingAction = 2;
-            ((MainActivity) ctx).pendingNewName = newName;
-
-            try {
-                PendingIntent pi = MediaStore.createWriteRequest(
-                        ctx.getContentResolver(),
-                        Collections.singletonList(mediaUri)
-                );
-
-                IntentSenderRequest req = new IntentSenderRequest.Builder(pi.getIntentSender()).build();
-                writeLauncher.launch(req);
-
-            } catch (Exception e) {
-                Toast.makeText(ctx, "Rename failed", Toast.LENGTH_SHORT).show();
-            }
-
-        });
-
-        dialog.setNegativeButton("Cancel", null);
-        dialog.show();
-    }
-
-    private void showDetails(VideoItem v) {
-
-        String msg =
-                "Title: " + v.getTitle() + "\n\n" +
-                        "Path: " + v.getFilePath() + "\n\n" +
-                        "Duration: " + formatDuration(v.getDuration()) + "\n\n" +
-                        "Size: " + formatSize(v.getSize()) + "\n\n" +
-                        "Date Modified: " + formatDate(v.getDateModified());
 
         new AlertDialog.Builder(ctx)
-                .setTitle("Details")
-                .setMessage(msg)
-                .setPositiveButton("OK", null)
+                .setTitle("Rename")
+                .setView(dialog)
+                .setPositiveButton("OK", (d, w) -> {
+                    String newName = input.getText().toString().trim();
+                    if (newName.isEmpty()) { toast("Name cannot be empty"); return; }
+
+                    v.setTempNewName(newName);
+                    listener.onRenameRequest(v);
+                })
+                .setNegativeButton("Cancel", null)
                 .show();
     }
 
-    public int filter(String text) {
+    private void deleteDialog(VideoItem v) {
 
-        text = text.toLowerCase();
-        filteredList.clear();
+        if (!v.isLocal()) { toast("Cannot delete online videos."); return; }
 
-        if (text.isEmpty()) {
-            filteredList.addAll(videos);
-        } else {
-            for (VideoItem v : videos) {
-                if (v.getTitle().toLowerCase().contains(text)) {
-                    filteredList.add(v);
-                }
-            }
-        }
-
-        notifyDataSetChanged();
-        return filteredList.size();
+        new AlertDialog.Builder(ctx)
+                .setTitle("Delete?")
+                .setMessage("Delete this video permanently?")
+                .setPositiveButton("Delete", (d, w) -> listener.onDeleteRequest(v))
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
-    public void updateList(ArrayList<VideoItem> newList) {
-        videos = new ArrayList<>(newList);
-        filteredList = new ArrayList<>(newList);
-        notifyDataSetChanged();
+    private void toast(String m) {
+        android.widget.Toast.makeText(ctx, m, android.widget.Toast.LENGTH_SHORT).show();
     }
 
-    // -------------------------------------------------------------------------
-    // HOLDER
-    // -------------------------------------------------------------------------
-    class Holder extends RecyclerView.ViewHolder {
+    private String formatFileSize(long s) {
+        if (s <= 0) return "0 MB";
+        return new DecimalFormat("#.#").format(s / (1024f * 1024f)) + " MB";
+    }
+
+    private String formatDate(long ms) {
+        return new SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+                .format(new Date(ms));
+    }
+
+    static class Holder extends RecyclerView.ViewHolder {
+
         ImageView thumbnail;
-        TextView videoName, videoSize, videoDate, videoDuration;
-        ImageButton btnMoreOptions;
+        TextView title, size, duration, date;
+        ImageButton menuBtn;
 
         public Holder(@NonNull View v) {
             super(v);
-
             thumbnail = v.findViewById(R.id.videoThumbnail);
-            videoName = v.findViewById(R.id.videoName);
-            videoSize = v.findViewById(R.id.videoSize);
-            videoDate = v.findViewById(R.id.videoDate);
-            videoDuration = v.findViewById(R.id.videoDuration);
-            btnMoreOptions = v.findViewById(R.id.btnMoreOptions);
+            title = v.findViewById(R.id.videoName);
+            size = v.findViewById(R.id.videoSize);
+            duration = v.findViewById(R.id.videoDuration);
+            date = v.findViewById(R.id.videoDate);
+            menuBtn = v.findViewById(R.id.btnMoreOptions);
         }
-    }
-
-    private String formatDuration(long ms) {
-        long sec = ms / 1000;
-        long min = sec / 60;
-        long rem = sec % 60;
-        return String.format("%02d:%02d", min, rem);
-    }
-
-    private String formatSize(long bytes) {
-        return (bytes / (1024 * 1024)) + " MB";
-    }
-
-    private String formatDate(long unix) {
-        return new SimpleDateFormat("dd MMM yyyy").format(new Date(unix * 1000));
     }
 }

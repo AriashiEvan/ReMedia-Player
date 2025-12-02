@@ -1,20 +1,21 @@
 package com.example.remediaplayer;
 
 import android.Manifest;
+import android.content.ContentUris;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
-import android.view.WindowInsets;
-import android.view.WindowInsetsController;
+import android.provider.MediaStore;
+import android.util.Patterns;
 import android.widget.ImageButton;
 import android.widget.PopupMenu;
 import android.widget.SearchView;
+import android.widget.Switch;
 import android.widget.TextView;
-import android.app.AlertDialog;
+import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.IntentSenderRequest;
@@ -27,307 +28,286 @@ import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import android.provider.MediaStore;
+import com.example.remediaplayer.peertube.PeerTubeManager;
 
 import java.util.ArrayList;
 import java.util.Collections;
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity implements VideoActionListener {
+
+    private RecyclerView videoRecyclerView;
+    private TextView videoCountText;
+    private SearchView searchView;
+    private ImageButton menuButton;
+    private Switch switchSource;
+
+    private ArrayList<VideoItem> localList = new ArrayList<>();
+    private ArrayList<VideoItem> onlineList = new ArrayList<>();
+    private VideoAdapter adapter;
+    private PeerTubeManager peerTube;
+
+
+    private boolean showingOnline = false;
+
+    private long pendingId = -1;
+    private String pendingNewName = null;
+    private int pendingAction = 0; // 1 delete, 2 rename
+
+    private ActivityResultLauncher<IntentSenderRequest> writeLauncher;
 
     private static final int PERMISSION_CODE = 101;
-
-    RecyclerView videoRecyclerView;
-    TextView videoCountText;
-    SearchView searchView;
-    ImageButton menuButton;
-
-    ArrayList<VideoItem> videoList = new ArrayList<>();
-    VideoAdapter adapter;
-    public Uri pendingModifyUri = null;
-    public int pendingAction = 0;
-    public String pendingNewName = null;
-    ActivityResultLauncher<IntentSenderRequest> writeRequestLauncher;
-    private Handler handler = new Handler();
-    private Runnable hideRunnable = this::hideSystemUI;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
 
-        boolean darkMode = getSharedPreferences("settings", MODE_PRIVATE)
+        boolean dark = getSharedPreferences("settings", MODE_PRIVATE)
                 .getBoolean("dark_mode", false);
-
-        if (darkMode)
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
-        else
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
+        AppCompatDelegate.setDefaultNightMode(
+                dark ? AppCompatDelegate.MODE_NIGHT_YES : AppCompatDelegate.MODE_NIGHT_NO
+        );
 
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        bindViews();
+        peerTube = new PeerTubeManager(this);
+        setupRecycler();
+        setupLauncher();
+        setupSearch();
+        setupMenu();
+        setupSwitch();
+
+
+        if (hasPermission()) loadLocalVideos();
+        else requestPermission();
+    }
+
+    private void bindViews() {
         videoRecyclerView = findViewById(R.id.videoRecyclerView);
         videoCountText = findViewById(R.id.videoCountText);
         searchView = findViewById(R.id.searchbar);
         menuButton = findViewById(R.id.menu_button);
-
-        setupWriteRequestHandler();
-        setupMenuButton();
-        setupSearchBar();
-        setupSystemUIHiding();
-
-        if (hasPermission()) {
-            loadVideos();
-        } else {
-            requestPermission();
-        }
-    }
-    private void setupWriteRequestHandler() {
-        writeRequestLauncher = registerForActivityResult(
-                new ActivityResultContracts.StartIntentSenderForResult(),
-                result -> {
-
-                    if (result.getResultCode() == RESULT_OK) {
-
-                        if (pendingAction == 1) {
-                            getContentResolver().delete(pendingModifyUri, null, null);
-                        }
-                        else if (pendingAction == 2) {
-                            ContentValues values = new ContentValues();
-                            values.put(MediaStore.Video.Media.DISPLAY_NAME, pendingNewName + ".mp4");
-                            getContentResolver().update(pendingModifyUri, values, null, null);
-                        }
-
-                        pendingModifyUri = null;
-                        pendingAction = 0;
-                        pendingNewName = null;
-
-                        loadVideos();
-                    }
-                }
-        );
+        switchSource = findViewById(R.id.switchSource);
     }
 
-    private void setupMenuButton() {
-
-        menuButton.setOnClickListener(v -> {
-
-            PopupMenu popup = new PopupMenu(MainActivity.this, v);
-            popup.getMenuInflater().inflate(R.menu.main_menu, popup.getMenu());
-
-            popup.setOnMenuItemClickListener(item -> {
-
-                int id = item.getItemId();
-
-                if (id == R.id.menu_sort) {
-                    showSortDialog();
-                    return true;
-                }
-
-                if (id == R.id.menu_settings) {
-                    startActivity(new Intent(MainActivity.this, SettingsActivity.class));
-                    return true;
-                }
-
-                return false;
-            });
-
-            popup.show();
-        });
-    }
-
-    private void showSortDialog() {
-
-        String[] options = {
-                "Name (A–Z)",
-                "Name (Z–A)",
-                "Size (Large → Small)",
-                "Size (Small → Large)",
-                "Duration (Long → Short)",
-                "Duration (Short → Long)",
-                "Date (Newest → Oldest)",
-                "Date (Oldest → Newest)"
-        };
-
-        AlertDialog.Builder dialog = new AlertDialog.Builder(this);
-        dialog.setTitle("Sort Videos");
-        dialog.setItems(options, (d, which) -> applySort(which));
-        dialog.show();
-    }
-
-    private void applySort(int type) {
-
-        switch (type) {
-
-            case 0: // Name A-Z
-                Collections.sort(videoList, (a, b) -> a.getTitle().compareToIgnoreCase(b.getTitle()));
-                break;
-
-            case 1: // Name Z-A
-                Collections.sort(videoList, (a, b) -> b.getTitle().compareToIgnoreCase(a.getTitle()));
-                break;
-
-            case 2: // Size Large > Small
-                Collections.sort(videoList, (a, b) -> Long.compare(b.getSize(), a.getSize()));
-                break;
-
-            case 3: // Size Small > Large
-                Collections.sort(videoList, (a, b) -> Long.compare(a.getSize(), b.getSize()));
-                break;
-
-            case 4: // Duration Long > Short
-                Collections.sort(videoList, (a, b) -> Long.compare(b.getDuration(), a.getDuration()));
-                break;
-
-            case 5: // Duration Short > Long
-                Collections.sort(videoList, (a, b) -> Long.compare(a.getDuration(), b.getDuration()));
-                break;
-
-            case 6: // Date Newest > Oldest
-                Collections.sort(videoList, (a, b) -> Long.compare(b.getDateModified(), a.getDateModified()));
-                break;
-
-            case 7: // Date Oldest > Newest
-                Collections.sort(videoList, (a, b) -> Long.compare(a.getDateModified(), b.getDateModified()));
-                break;
-        }
-
-        adapter.updateList(videoList);
-        videoCountText.setText(videoList.size() + " videos");
-    }
-
-    private void setupSearchBar() {
-
-        searchView.clearFocus();
-
-        searchView.setOnQueryTextListener(new SearchView.OnQueryTextListener() {
-
-            @Override
-            public boolean onQueryTextSubmit(String q) {
-                int count = adapter.filter(q);
-                videoCountText.setText(count + " videos");
-                return true;
-            }
-
-            @Override
-            public boolean onQueryTextChange(String q) {
-                int count = adapter.filter(q);
-                videoCountText.setText(count + " videos");
-                return true;
-            }
-        });
-    }
-
-    private void loadVideos() {
-        videoList = VideoLoader.loadVideos(this);
-        videoCountText.setText(videoList.size() + " videos");
-
-        adapter = new VideoAdapter(this, videoList, writeRequestLauncher);
+    private void setupRecycler() {
+        adapter = new VideoAdapter(this, new ArrayList<>(), this);
         videoRecyclerView.setLayoutManager(new LinearLayoutManager(this));
         videoRecyclerView.setAdapter(adapter);
     }
 
-    private boolean hasPermission() {
+    private void setupMenu() {
+        menuButton.setOnClickListener(v -> {
+            PopupMenu m = new PopupMenu(this, v);
+            m.inflate(R.menu.main_menu);
 
+            m.setOnMenuItemClickListener(i -> {
+                if (i.getItemId() == R.id.menu_settings) {
+                    startActivity(new Intent(this, SettingsActivity.class));
+                    return true;
+                }
+                return false;
+            });
+
+            m.show();
+        });
+    }
+
+    private void searchOnline(String query) {
+
+        if (peerTube == null) return;
+
+        peerTube.search(query, results -> {
+
+            if (results == null) results = new ArrayList<>();
+
+            onlineList.clear();
+            onlineList.addAll(results);
+
+            adapter.updateList(onlineList);
+            videoCountText.setText(results.size() + " online videos");
+        });
+    }
+
+    private void setupSwitch() {
+        switchSource.setOnCheckedChangeListener((button, isOnline) -> {
+            showingOnline = isOnline;
+            searchView.setQuery("", false);
+
+            if (isOnline) {
+
+                onlineList.clear();
+                adapter.updateList(onlineList);
+                videoCountText.setText("Loading online videos...");
+
+                searchOnline(null);
+
+            } else {
+                adapter.updateList(localList);
+                videoCountText.setText(localList.size() + " videos");
+            }
+        });
+
+    }
+
+    private void setupLauncher() {
+        writeLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartIntentSenderForResult(),
+                r -> {
+                    if (r.getResultCode() != RESULT_OK) {
+                        clearPending();
+                        return;
+                    }
+
+                    if (pendingAction == 2) performRename();
+                    if (pendingAction == 1) {
+                        // SAF delete already performed
+                        Toast.makeText(this, "Deleted", Toast.LENGTH_SHORT).show();
+                    }
+
+                    loadLocalVideos();
+                    clearPending();
+                }
+        );
+    }
+
+    private void clearPending() {
+        pendingAction = 0;
+        pendingId = -1;
+        pendingNewName = null;
+    }
+
+    private void performRename() {
+        String newName = pendingNewName;
+        if (!newName.contains(".")) newName += ".mp4";
+
+        Uri uri = ContentUris.withAppendedId(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                pendingId
+        );
+
+        ContentValues cv = new ContentValues();
+        cv.put(MediaStore.Video.Media.DISPLAY_NAME, newName);
+
+        int res = getContentResolver().update(uri, cv, null, null);
+
+        if (res <= 0)
+            Toast.makeText(this, "Rename failed", Toast.LENGTH_LONG).show();
+        else
+            Toast.makeText(this, "Renamed", Toast.LENGTH_SHORT).show();
+    }
+
+    private void setupSearch() {
+        searchView.setOnQueryTextListener(new SearchView.OnQueryTextListener() {
+            @Override
+            public boolean onQueryTextSubmit(String q) {
+
+                if (q == null) return true;
+                q = q.trim();
+
+                if (isValidUrl(q)) {
+                    Intent i = new Intent(MainActivity.this, VideoPlayerView.class);
+                    i.putExtra("video_path", q);
+                    startActivity(i);
+                    return true;
+                }
+
+                int c = adapter.filter(q);
+                videoCountText.setText(c + " videos");
+
+                return true;
+            }
+
+            @Override
+            public boolean onQueryTextChange(String t) {
+                int c = adapter.filter(t == null ? "" : t);
+                videoCountText.setText(c + " videos");
+                return true;
+            }
+        });
+    }
+
+    private boolean isValidUrl(String s) {
+        return s.startsWith("http://") ||
+                s.startsWith("https://") ||
+                Patterns.WEB_URL.matcher(s).matches();
+    }
+
+    private void loadLocalVideos() {
+        localList = VideoLoader.loadVideos(this);
+
+        if (!showingOnline) {
+            adapter.updateList(localList);
+            videoCountText.setText(localList.size() + " videos");
+        }
+    }
+
+    private boolean hasPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
-            return ContextCompat.checkSelfPermission(this,
-                    Manifest.permission.READ_MEDIA_VIDEO)
+            return checkSelfPermission(Manifest.permission.READ_MEDIA_VIDEO)
                     == PackageManager.PERMISSION_GRANTED;
 
-        return ContextCompat.checkSelfPermission(this,
-                Manifest.permission.READ_EXTERNAL_STORAGE)
+        return ContextCompat.checkSelfPermission(
+                this, Manifest.permission.READ_EXTERNAL_STORAGE)
                 == PackageManager.PERMISSION_GRANTED;
     }
 
     private void requestPermission() {
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
-            ActivityCompat.requestPermissions(this,
+            ActivityCompat.requestPermissions(
+                    this,
                     new String[]{Manifest.permission.READ_MEDIA_VIDEO},
-                    PERMISSION_CODE);
-
-        else ActivityCompat.requestPermissions(this,
-                new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
-                PERMISSION_CODE);
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode,
-                                           @NonNull String[] perms,
-                                           @NonNull int[] results) {
-
-        super.onRequestPermissionsResult(requestCode, perms, results);
-
-        if (requestCode == PERMISSION_CODE &&
-                results.length > 0 &&
-                results[0] == PackageManager.PERMISSION_GRANTED) {
-            loadVideos();
-        }
-    }
-
-    private void setupSystemUIHiding() {
-
-        boolean hideUI = getSharedPreferences("settings", MODE_PRIVATE)
-                .getBoolean("hide_ui", true);
-
-        if (hideUI) handler.postDelayed(hideRunnable, 1500);
-
-        findViewById(android.R.id.content).setOnTouchListener((v, e) -> {
-
-            showSystemUI();
-
-            boolean setting = getSharedPreferences("settings", MODE_PRIVATE)
-                    .getBoolean("hide_ui", true);
-
-            if (setting) {
-                handler.removeCallbacks(hideRunnable);
-                handler.postDelayed(hideRunnable, 3000);
-            }
-
-            return false;
-        });
-    }
-
-    private void hideSystemUI() {
-
-        boolean hideSetting = getSharedPreferences("settings", MODE_PRIVATE)
-                .getBoolean("hide_ui", true);
-
-        if (!hideSetting) return;
-
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-
-            getWindow().setDecorFitsSystemWindows(false);
-            WindowInsetsController controller = getWindow().getInsetsController();
-
-            if (controller != null) {
-                controller.hide(WindowInsets.Type.systemBars());
-                controller.setSystemBarsBehavior(
-                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                );
-            }
-        }
-    }
-
-    private void showSystemUI() {
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-
-            getWindow().setDecorFitsSystemWindows(true);
-            WindowInsetsController controller = getWindow().getInsetsController();
-
-            if (controller != null) controller.show(WindowInsets.Type.systemBars());
-        }
-    }
-    @Override
-    protected void onResume() {
-        super.onResume();
-
-        boolean darkMode = getSharedPreferences("settings", MODE_PRIVATE)
-                .getBoolean("dark_mode", false);
-
-        if (darkMode)
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
+                    PERMISSION_CODE
+            );
         else
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
+            ActivityCompat.requestPermissions(
+                    this,
+                    new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
+                    PERMISSION_CODE
+            );
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int c, @NonNull String[] p, @NonNull int[] r) {
+        if (c == PERMISSION_CODE &&
+                r.length > 0 &&
+                r[0] == PackageManager.PERMISSION_GRANTED)
+            loadLocalVideos();
+
+        super.onRequestPermissionsResult(c, p, r);
+    }
+
+    @Override
+    public void onPlay(VideoItem item) {
+        Intent i = new Intent(this, VideoPlayerView.class);
+        i.putExtra("video_path", item.getPath());
+        startActivity(i);
+    }
+
+    @Override
+    public void onShare(VideoItem item) {}
+
+    @Override
+    public void onRenameRequest(VideoItem item) {
+        pendingAction = 2;
+        pendingId = item.getId();
+        pendingNewName = item.getTempNewName();
+
+        writeLauncher.launch(
+                VideoLoader.getWriteRequestForId(this, pendingId)
+        );
+    }
+
+    @Override
+    public void onDeleteRequest(VideoItem item) {
+        pendingAction = 1;
+        pendingId = item.getId();
+
+        writeLauncher.launch(
+                VideoLoader.getDeleteRequestForIds(
+                        this,
+                        Collections.singletonList(item.getId())
+                )
+        );
     }
 }

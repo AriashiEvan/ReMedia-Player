@@ -11,7 +11,6 @@ import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.widget.ImageButton;
 import android.widget.TextView;
-
 import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.media3.common.MediaItem;
@@ -20,16 +19,15 @@ import androidx.media3.ui.PlayerView;
 
 import java.io.File;
 
-/** @noinspection ALL*/
 public class VideoPlayerView extends AppCompatActivity {
 
-    PlayerView playerView;
-    ExoPlayer player;
+    private PlayerView playerView;
+    private ExoPlayer player;
 
-    ImageButton backBtn, fullBtn, pipBtn;
-    TextView fileNameText;
+    private ImageButton backBtn, fullBtn, pipBtn;
+    private TextView fileNameText;
 
-    boolean isFullscreen = false;
+    private boolean isFullscreen = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -44,60 +42,37 @@ public class VideoPlayerView extends AppCompatActivity {
         pipBtn = playerView.findViewById(R.id.exo_pip);
         fileNameText = playerView.findViewById(R.id.File_name);
 
-        fileNameText.setText(new File(path).getName());
+        if (path.startsWith("http"))
+            fileNameText.setText(path);
+        else
+            fileNameText.setText(new File(path).getName());
 
         initPlayer(path);
         enableImmersiveMode();
 
         backBtn.setOnClickListener(v -> onBackPressed());
-
         fullBtn.setOnClickListener(v -> toggleFullscreen());
-
-        pipBtn.setOnClickListener(v -> enterPipSafe());
-    }
-
-    private void enableImmersiveMode() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            getWindow().setDecorFitsSystemWindows(false);
-
-            WindowInsetsController controller = getWindow().getInsetsController();
-            if (controller != null) {
-                controller.hide(WindowInsets.Type.systemBars());
-                controller.setSystemBarsBehavior(
-                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                );
-            }
-        } else {
-            getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                            | View.SYSTEM_UI_FLAG_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-            );
-        }
-    }
-
-    @Override
-    public void onWindowFocusChanged(boolean hasFocus) {
-        super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) enableImmersiveMode();
+        pipBtn.setOnClickListener(v -> enterPipSafely());
     }
 
     private void initPlayer(String path) {
         player = new ExoPlayer.Builder(this).build();
         playerView.setPlayer(player);
 
-        MediaItem item = MediaItem.fromUri(Uri.fromFile(new File(path)));
+        MediaItem item;
+        if (path.startsWith("http")) {
+            item = MediaItem.fromUri(Uri.parse(path));
+        } else {
+            item = MediaItem.fromUri(Uri.fromFile(new File(path)));
+        }
+
         player.setMediaItem(item);
         player.prepare();
+
         boolean autoPlay = getSharedPreferences("settings", MODE_PRIVATE)
                 .getBoolean("auto_play", true);
 
-        if (autoPlay)
-            player.play();
-
+        if (autoPlay) player.play();
     }
 
     private void toggleFullscreen() {
@@ -110,11 +85,12 @@ public class VideoPlayerView extends AppCompatActivity {
         }
     }
 
-    private void enterPipSafe() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) enterPiP();
+    private void enterPipSafely() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            enterPiP();
     }
 
-    @RequiresApi(api = Build.VERSION_CODES.O)
+    @RequiresApi(Build.VERSION_CODES.O)
     private void enterPiP() {
         PictureInPictureParams params =
                 new PictureInPictureParams.Builder()
@@ -123,12 +99,38 @@ public class VideoPlayerView extends AppCompatActivity {
         enterPictureInPictureMode(params);
     }
 
+    private void enableImmersiveMode() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            getWindow().setDecorFitsSystemWindows(false);
+            WindowInsetsController c = getWindow().getInsetsController();
+            if (c != null) {
+                c.hide(WindowInsets.Type.systemBars());
+                c.setSystemBarsBehavior(
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                );
+            }
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
+                            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                            View.SYSTEM_UI_FLAG_FULLSCREEN |
+                            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
+                            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+                            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            );
+        }
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) enableImmersiveMode();
+    }
+
     @Override
     protected void onStop() {
         super.onStop();
-        if (!isInPictureInPictureMode()) {
-            player.pause();
-        }
+        if (!isInPictureInPictureMode()) player.pause();
     }
 
     @Override
