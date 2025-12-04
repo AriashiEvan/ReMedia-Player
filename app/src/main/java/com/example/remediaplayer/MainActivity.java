@@ -10,6 +10,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.MediaStore;
 import android.util.Patterns;
+import java.io.File;
+import androidx.core.content.FileProvider;
 import android.widget.ImageButton;
 import android.widget.PopupMenu;
 import android.widget.SearchView;
@@ -32,8 +34,10 @@ import com.example.remediaplayer.peertube.PeerTubeManager;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 
 public class MainActivity extends AppCompatActivity implements VideoActionListener {
+
 
     private RecyclerView videoRecyclerView;
     private TextView videoCountText;
@@ -41,25 +45,32 @@ public class MainActivity extends AppCompatActivity implements VideoActionListen
     private ImageButton menuButton;
     private Switch switchSource;
 
+
     private ArrayList<VideoItem> localList = new ArrayList<>();
     private ArrayList<VideoItem> onlineList = new ArrayList<>();
     private VideoAdapter adapter;
+
     private PeerTubeManager peerTube;
-
-
     private boolean showingOnline = false;
+
+
+    private int onlineOffset = 0;
+    private final int PAGE_SIZE = 20;
+    private int onlineTotal = Integer.MAX_VALUE;
+    private boolean loadingOnline = false;
+
 
     private long pendingId = -1;
     private String pendingNewName = null;
-    private int pendingAction = 0; // 1 delete, 2 rename
+    private int pendingAction = 0;
 
     private ActivityResultLauncher<IntentSenderRequest> writeLauncher;
 
     private static final int PERMISSION_CODE = 101;
 
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-
         boolean dark = getSharedPreferences("settings", MODE_PRIVATE)
                 .getBoolean("dark_mode", false);
         AppCompatDelegate.setDefaultNightMode(
@@ -70,13 +81,13 @@ public class MainActivity extends AppCompatActivity implements VideoActionListen
         setContentView(R.layout.activity_main);
 
         bindViews();
-        peerTube = new PeerTubeManager(this);
         setupRecycler();
-        setupLauncher();
-        setupSearch();
         setupMenu();
         setupSwitch();
+        setupLauncher();
+        setupSearch();
 
+        peerTube = new PeerTubeManager(this);
 
         if (hasPermission()) loadLocalVideos();
         else requestPermission();
@@ -94,6 +105,28 @@ public class MainActivity extends AppCompatActivity implements VideoActionListen
         adapter = new VideoAdapter(this, new ArrayList<>(), this);
         videoRecyclerView.setLayoutManager(new LinearLayoutManager(this));
         videoRecyclerView.setAdapter(adapter);
+
+        videoRecyclerView.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
+                super.onScrolled(rv, dx, dy);
+
+                if (!showingOnline) return;
+                if (loadingOnline) return;
+
+                LinearLayoutManager lm = (LinearLayoutManager) rv.getLayoutManager();
+                if (lm == null) return;
+
+                int visible = lm.getChildCount();
+                int total = lm.getItemCount();
+                int first = lm.findFirstVisibleItemPosition();
+
+                // Trigger next page load
+                if ((first + visible) >= (total - 4) && total < onlineTotal) {
+                    loadMoreOnline(null);
+                }
+            }
+        });
     }
 
     private void setupMenu() {
@@ -113,42 +146,111 @@ public class MainActivity extends AppCompatActivity implements VideoActionListen
         });
     }
 
-    private void searchOnline(String query) {
+    private void setupSearch() {
+        searchView.setOnQueryTextListener(new SearchView.OnQueryTextListener() {
 
-        if (peerTube == null) return;
+            @Override
+            public boolean onQueryTextSubmit(String q) {
 
-        peerTube.search(query, results -> {
+                if (q == null) return true;
+                q = q.trim();
 
-            if (results == null) results = new ArrayList<>();
+                // URL shortcut
+                if (isValidUrl(q)) {
+                    Intent i = new Intent(MainActivity.this, VideoPlayerView.class);
+                    i.putExtra("video_path", q);
+                    startActivity(i);
+                    return true;
+                }
 
-            onlineList.clear();
-            onlineList.addAll(results);
+                if (showingOnline) {
+                    // New search → reset pagination
+                    onlineList.clear();
+                    adapter.updateList(new ArrayList<>());
+                    videoCountText.setText("Loading online videos...");
+                    onlineOffset = 0;
+                    onlineTotal = Integer.MAX_VALUE;
+                    loadMoreOnline(q);
+                } else {
+                    int c = adapter.filter(q);
+                    videoCountText.setText(c + " videos");
+                }
+                return true;
+            }
 
-            adapter.updateList(onlineList);
-            videoCountText.setText(results.size() + " online videos");
+            @Override
+            public boolean onQueryTextChange(String t) {
+                if (!showingOnline) {
+                    int c = adapter.filter(t == null ? "" : t);
+                    videoCountText.setText(c + " videos");
+                }
+                return true;
+            }
         });
     }
 
+    private boolean isValidUrl(String s) {
+        return s.startsWith("http://") ||
+                s.startsWith("https://") ||
+                Patterns.WEB_URL.matcher(s).matches();
+    }
+
+    private void loadMoreOnline(String query) {
+        if (peerTube == null) return;
+
+        loadingOnline = true;
+        videoCountText.setText("Loading online videos...");
+
+        peerTube.search(query, onlineOffset, PAGE_SIZE, new PeerTubeManager.PeerTubeCallback() {
+            @Override
+            public void onResult(List<VideoItem> results, int total) {
+
+                runOnUiThread(() -> {
+
+                    final List<VideoItem> safeResults =
+                            (results == null) ? new ArrayList<>() : results;
+
+
+                    onlineTotal = total;
+
+                    onlineList.addAll(results);
+                    adapter.updateList(onlineList);
+
+                    onlineOffset += results.size();
+
+                    videoCountText.setText(onlineList.size() + " online videos");
+                    loadingOnline = false;
+                });
+            }
+        });
+
+    }
+
+
     private void setupSwitch() {
         switchSource.setOnCheckedChangeListener((button, isOnline) -> {
+
             showingOnline = isOnline;
             searchView.setQuery("", false);
 
             if (isOnline) {
-
+                // Reset online mode state
                 onlineList.clear();
                 adapter.updateList(onlineList);
                 videoCountText.setText("Loading online videos...");
 
-                searchOnline(null);
+                onlineOffset = 0;
+                onlineTotal = Integer.MAX_VALUE;
+
+                loadMoreOnline(null);
 
             } else {
                 adapter.updateList(localList);
                 videoCountText.setText(localList.size() + " videos");
             }
         });
-
     }
+
 
     private void setupLauncher() {
         writeLauncher = registerForActivityResult(
@@ -161,7 +263,6 @@ public class MainActivity extends AppCompatActivity implements VideoActionListen
 
                     if (pendingAction == 2) performRename();
                     if (pendingAction == 1) {
-                        // SAF delete already performed
                         Toast.makeText(this, "Deleted", Toast.LENGTH_SHORT).show();
                     }
 
@@ -197,41 +298,6 @@ public class MainActivity extends AppCompatActivity implements VideoActionListen
             Toast.makeText(this, "Renamed", Toast.LENGTH_SHORT).show();
     }
 
-    private void setupSearch() {
-        searchView.setOnQueryTextListener(new SearchView.OnQueryTextListener() {
-            @Override
-            public boolean onQueryTextSubmit(String q) {
-
-                if (q == null) return true;
-                q = q.trim();
-
-                if (isValidUrl(q)) {
-                    Intent i = new Intent(MainActivity.this, VideoPlayerView.class);
-                    i.putExtra("video_path", q);
-                    startActivity(i);
-                    return true;
-                }
-
-                int c = adapter.filter(q);
-                videoCountText.setText(c + " videos");
-
-                return true;
-            }
-
-            @Override
-            public boolean onQueryTextChange(String t) {
-                int c = adapter.filter(t == null ? "" : t);
-                videoCountText.setText(c + " videos");
-                return true;
-            }
-        });
-    }
-
-    private boolean isValidUrl(String s) {
-        return s.startsWith("http://") ||
-                s.startsWith("https://") ||
-                Patterns.WEB_URL.matcher(s).matches();
-    }
 
     private void loadLocalVideos() {
         localList = VideoLoader.loadVideos(this);
@@ -241,6 +307,7 @@ public class MainActivity extends AppCompatActivity implements VideoActionListen
             videoCountText.setText(localList.size() + " videos");
         }
     }
+
 
     private boolean hasPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
@@ -268,7 +335,9 @@ public class MainActivity extends AppCompatActivity implements VideoActionListen
     }
 
     @Override
-    public void onRequestPermissionsResult(int c, @NonNull String[] p, @NonNull int[] r) {
+    public void onRequestPermissionsResult(int c,
+                                           @NonNull String[] p,
+                                           @NonNull int[] r) {
         if (c == PERMISSION_CODE &&
                 r.length > 0 &&
                 r[0] == PackageManager.PERMISSION_GRANTED)
@@ -276,7 +345,6 @@ public class MainActivity extends AppCompatActivity implements VideoActionListen
 
         super.onRequestPermissionsResult(c, p, r);
     }
-
     @Override
     public void onPlay(VideoItem item) {
         Intent i = new Intent(this, VideoPlayerView.class);
@@ -285,7 +353,38 @@ public class MainActivity extends AppCompatActivity implements VideoActionListen
     }
 
     @Override
-    public void onShare(VideoItem item) {}
+    public void onShare(VideoItem item) {
+
+        if (item.isLocal()) {
+
+            File f = new File(item.getPath());
+
+            Uri uri = FileProvider.getUriForFile(
+                    this,
+                    getPackageName() + ".provider",
+                    f
+            );
+
+            Intent shareIntent = new Intent(Intent.ACTION_SEND);
+            shareIntent.setType("video/*");
+            shareIntent.putExtra(Intent.EXTRA_STREAM, uri);
+            shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+            startActivity(Intent.createChooser(shareIntent, "Share Video"));
+        }
+        else {
+            // ONLINE VIDEO SHARE
+            Intent shareIntent = new Intent(Intent.ACTION_SEND);
+            shareIntent.setType("text/plain");
+
+            // Online video URL stored in path
+            shareIntent.putExtra(Intent.EXTRA_TEXT, item.getPath());
+
+            startActivity(Intent.createChooser(shareIntent, "Share Link"));
+        }
+    }
+
+
 
     @Override
     public void onRenameRequest(VideoItem item) {

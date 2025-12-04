@@ -2,6 +2,9 @@ package com.example.remediaplayer;
 
 import android.app.AlertDialog;
 import android.content.Context;
+import android.content.Intent;
+import android.net.Uri;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -9,12 +12,15 @@ import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.PopupMenu;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.core.content.FileProvider;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.bumptech.glide.Glide;
 
+import java.io.File;
 import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -23,30 +29,38 @@ import java.util.Locale;
 
 public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
 
-    private Context ctx;
+    private final Context ctx;
     private ArrayList<VideoItem> list;
-    private VideoActionListener listener;
+    private ArrayList<VideoItem> masterList;
+    private final VideoActionListener listener;
 
     public VideoAdapter(Context ctx, ArrayList<VideoItem> list, VideoActionListener listener) {
         this.ctx = ctx;
-        this.list = list;
         this.listener = listener;
+        this.list = list;
+        this.masterList = new ArrayList<>(list);
     }
 
     public void updateList(ArrayList<VideoItem> newList) {
-        this.list = newList;
+        this.masterList = new ArrayList<>(newList);
+        this.list = new ArrayList<>(newList);
         notifyDataSetChanged();
     }
 
     public int filter(String q) {
-        if (q == null || q.trim().isEmpty()) return list.size();
+        if (q == null || q.trim().isEmpty()) {
+            list = new ArrayList<>(masterList);
+            notifyDataSetChanged();
+            return list.size();
+        }
 
         q = q.toLowerCase(Locale.ROOT);
-        ArrayList<VideoItem> filtered = new ArrayList<>();
 
-        for (VideoItem v : list) {
-            if (v.getTitle().toLowerCase(Locale.ROOT).contains(q))
+        ArrayList<VideoItem> filtered = new ArrayList<>();
+        for (VideoItem v : masterList) {
+            if (v.getTitle().toLowerCase(Locale.ROOT).contains(q)) {
                 filtered.add(v);
+            }
         }
 
         this.list = filtered;
@@ -56,8 +70,8 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
 
     @NonNull
     @Override
-    public Holder onCreateViewHolder(@NonNull ViewGroup p, int vType) {
-        View v = LayoutInflater.from(ctx).inflate(R.layout.video_item, p, false);
+    public Holder onCreateViewHolder(@NonNull ViewGroup parent, int vType) {
+        View v = LayoutInflater.from(ctx).inflate(R.layout.video_item, parent, false);
         return new Holder(v);
     }
 
@@ -66,27 +80,70 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
         VideoItem v = list.get(pos);
 
         h.title.setText(v.getTitle());
-        h.size.setText(formatFileSize(v.getSize()));
-        h.duration.setText(v.getDurationFormatted());
-        h.date.setText(formatDate(v.getDateModified()));
+
+        if (v.isLocal()) {
+            h.size.setText(formatFileSize(v.getSize()));
+            h.duration.setText(v.getDurationFormatted());
+            h.date.setText(formatDate(v.getDateModified()));
+        } else {
+            h.size.setText("Online");
+            h.duration.setText(v.getDurationFormatted());
+            h.date.setText("Web");
+        }
+        Log.d("THUMB_URL", "Loading thumbnail: " + v.getThumbnail());
+
 
         Glide.with(ctx)
                 .load(v.getThumbnail())
                 .placeholder(R.drawable.thumbnail_placeholder)
+                .error(R.drawable.thumbnail_placeholder)
+                .listener(new com.bumptech.glide.request.RequestListener<android.graphics.drawable.Drawable>() {
+                    @Override
+                    public boolean onLoadFailed(
+                            com.bumptech.glide.load.engine.GlideException e,
+                            Object model,
+                            com.bumptech.glide.request.target.Target<android.graphics.drawable.Drawable> target,
+                            boolean isFirstResource
+                    ) {
+                        Log.e("GLIDE_ERROR", "Failed loading: " + model, e);
+                        return false;
+                    }
+
+                    @Override
+                    public boolean onResourceReady(
+                            android.graphics.drawable.Drawable resource,
+                            Object model,
+                            com.bumptech.glide.request.target.Target<android.graphics.drawable.Drawable> target,
+                            com.bumptech.glide.load.DataSource dataSource,
+                            boolean isFirstResource
+                    ) {
+                        return false;
+                    }
+                })
                 .into(h.thumbnail);
 
+
+
+        // play on click
         h.itemView.setOnClickListener(x -> listener.onPlay(v));
+
+        // menu (share, rename, delete)
         h.menuBtn.setOnClickListener(btn -> showMenu(btn, v));
     }
 
     @Override
     public int getItemCount() {
-        return list.size();
+        return list == null ? 0 : list.size();
     }
 
     private void showMenu(View view, VideoItem v) {
         PopupMenu menu = new PopupMenu(ctx, view);
         menu.inflate(R.menu.video_options);
+
+        if (!v.isLocal()) {
+            menu.getMenu().findItem(R.id.optRename).setVisible(false);
+            menu.getMenu().findItem(R.id.optDelete).setVisible(false);
+        }
 
         menu.setOnMenuItemClickListener(item -> {
             int id = item.getItemId();
@@ -95,15 +152,40 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
             else if (id == R.id.optShare) listener.onShare(v);
             else if (id == R.id.optRename) renameDialog(v);
             else if (id == R.id.optDelete) deleteDialog(v);
-
+            else if (id == R.id.optDetails) showDetailsDialog(v);
             return true;
         });
 
         menu.show();
     }
 
-    private void renameDialog(VideoItem v) {
+    private void showDetailsDialog(VideoItem v) {
+        String message;
 
+        if (v.isLocal()) {
+            File f = new File(v.getPath());
+            long fileSize = f.length() / (1024 * 1024);
+
+            message = "Title: " + v.getTitle() +
+                    "\n\nPath:\n" + v.getPath() +
+                    "\n\nSize: " + fileSize + " MB" +
+                    "\nDuration: " + v.getDurationFormatted() +
+                    "\nModified: " + formatDate(v.getDateModified());
+        } else {
+            message = "Title: " + v.getTitle() +
+                    "\n\nURL:\n" + v.getPath() +
+                    "\nDuration: " + v.getDurationFormatted();
+        }
+
+        new AlertDialog.Builder(ctx)
+                .setTitle("Video Details")
+                .setMessage(message)
+                .setPositiveButton("OK", null)
+                .show();
+    }
+
+
+    private void renameDialog(VideoItem v) {
         if (!v.isLocal()) {
             toast("Cannot rename online videos.");
             return;
@@ -118,8 +200,10 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
                 .setView(dialog)
                 .setPositiveButton("OK", (d, w) -> {
                     String newName = input.getText().toString().trim();
-                    if (newName.isEmpty()) { toast("Name cannot be empty"); return; }
-
+                    if (newName.isEmpty()) {
+                        toast("Name cannot be empty");
+                        return;
+                    }
                     v.setTempNewName(newName);
                     listener.onRenameRequest(v);
                 })
@@ -128,8 +212,10 @@ public class VideoAdapter extends RecyclerView.Adapter<VideoAdapter.Holder> {
     }
 
     private void deleteDialog(VideoItem v) {
-
-        if (!v.isLocal()) { toast("Cannot delete online videos."); return; }
+        if (!v.isLocal()) {
+            toast("Cannot delete online videos.");
+            return;
+        }
 
         new AlertDialog.Builder(ctx)
                 .setTitle("Delete?")

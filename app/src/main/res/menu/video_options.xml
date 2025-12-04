@@ -17,4 +17,9 @@
         android:id="@+id/optDelete"
         android:title="Delete" />
 
+    <item
+        android:id="@+id/optDetails"
+        android:title="Details" />
+
+
 </menu>

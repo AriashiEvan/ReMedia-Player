@@ -14,9 +14,8 @@ public interface PeerTubeApi {
             @Query("count") int count,
             @Query("sort") String sort
     );
-
-    @GET("videos/{uuid}")
-    Call<PeerTubeManager.VideoDetailsResponse> getVideoDetails(
-            @Path("uuid") String uuid
+    @GET("videos/{id}")
+    Call<PeerTubeVideoDetails> getVideoDetails(
+            @Path("id") String id
     );
 }

@@ -12,14 +12,12 @@ public class VideoItem {
     private String thumbnail;
     private boolean isLocal;
 
-    // Temporary rename text
     private String tempNewName;
     public void setTempNewName(String name) { this.tempNewName = name; }
     public String getTempNewName() { return tempNewName; }
 
     private VideoItem() {}
 
-    // Factory for local videos (with _ID)
     public static VideoItem fromLocal(
             long id,
             String title,
@@ -72,4 +70,6 @@ public class VideoItem {
         long sec = duration / 1000;
         return String.format("%d:%02d", sec / 60, sec % 60);
     }
+
+
 }

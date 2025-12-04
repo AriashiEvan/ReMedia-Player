@@ -1,14 +1,14 @@
 package com.example.remediaplayer.peertube;
 
-import android.content.Context;
 import android.net.Uri;
 import android.util.Log;
 
 import com.example.remediaplayer.VideoItem;
+import com.google.gson.Gson;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.Locale;
 
 import okhttp3.OkHttpClient;
 import okhttp3.logging.HttpLoggingInterceptor;
@@ -20,242 +20,238 @@ import retrofit2.converter.gson.GsonConverterFactory;
 
 public class PeerTubeManager {
 
-    private static final String BASE_URL = "https://peertube2.cpy.re/api/v1/";
-    private final PeerTubeApi api;
-    private final String baseHost;
+    private static final String TAG = "PEERTUBE";
+    private static final String FALLBACK_SEARCH = "https://peertube2.cpy.re/api/v1/";
+
+    private final PeerTubeApi searchApi;
 
     public interface PeerTubeCallback {
-        void onResult(List<VideoItem> results);
+        void onResult(List<VideoItem> results, int total);
     }
 
-    public PeerTubeManager(Context ctx) {
-        HttpLoggingInterceptor logger = new HttpLoggingInterceptor(message -> {
+    public interface ResolveCallback {
+        void onResolved(String streamUrl);
+        void onError(Throwable t);
+    }
 
-            Log.d("PEERTUBE_JSON", message);
-        });
-        logger.setLevel(HttpLoggingInterceptor.Level.BASIC);
+    public PeerTubeManager(android.content.Context ctx) {
+
+        HttpLoggingInterceptor logger =
+                new HttpLoggingInterceptor(msg -> Log.d("PEERTUBE_JSON", msg));
+
+        logger.setLevel(HttpLoggingInterceptor.Level.BODY);
+
 
         OkHttpClient client = new OkHttpClient.Builder()
                 .addInterceptor(logger)
                 .build();
 
         Retrofit retrofit = new Retrofit.Builder()
-                .baseUrl(BASE_URL)
+                .baseUrl(FALLBACK_SEARCH)
                 .addConverterFactory(GsonConverterFactory.create())
                 .client(client)
                 .build();
 
-        api = retrofit.create(PeerTubeApi.class);
-
-
-        String tmp = BASE_URL;
-        if (tmp.endsWith("api/v1/")) {
-            baseHost = tmp.replace("api/v1/", "");
-        } else {
-            baseHost = tmp;
-        }
+        searchApi = retrofit.create(PeerTubeApi.class);
     }
 
-    public void search(String query, PeerTubeCallback callback) {
+    public void search(String query, int start, int count, PeerTubeCallback cb) {
 
-        if (query != null && query.trim().isEmpty())
-            query = null;
-
-        Call<PeerTubeResponse> call = api.searchVideos(
-                query,
-                0,
-                20,
+        Call<PeerTubeResponse> call = searchApi.searchVideos(
+                (query == null || query.trim().isEmpty()) ? null : query,
+                start,
+                count,
                 "-publishedAt"
         );
 
         call.enqueue(new Callback<PeerTubeResponse>() {
             @Override
-            public void onResponse(Call<PeerTubeResponse> call, Response<PeerTubeResponse> response) {
+            public void onResponse(Call<PeerTubeResponse> call,
+                                   Response<PeerTubeResponse> r) {
 
-                if (!response.isSuccessful() || response.body() == null) {
-                    callback.onResult(new ArrayList<>());
+                if (!r.isSuccessful() || r.body() == null) {
+                    cb.onResult(new ArrayList<>(), 0);
                     return;
                 }
 
-                List<PeerTubeVideo> data = response.body().getData();
-                if (data == null || data.isEmpty()) {
-                    callback.onResult(new ArrayList<>());
-                    return;
-                }
-
-
+                List<PeerTubeVideo> data = r.body().getData();
+                int total = r.body().getTotal();
                 List<VideoItem> results = new ArrayList<>();
 
-
-                AtomicInteger pending = new AtomicInteger(data.size());
-
                 for (PeerTubeVideo v : data) {
+                    Log.d("PT_JSON", "JSON Item: " + new Gson().toJson(v));
 
-                    String fullThumb;
-                    if (v.getThumbnailPath() != null && !v.getThumbnailPath().trim().isEmpty()) {
+                    String instance = "";
+                    String videoUrl = v.getVideoUrl();
 
-                        String thumb = v.getThumbnailPath();
-                        if (thumb.startsWith("/")) fullThumb = baseHost + thumb;
-                        else fullThumb = baseHost + "/" + thumb;
-                    } else {
-                        fullThumb = null;
+                    if (videoUrl != null && videoUrl.contains("/videos/watch/")) {
+                        instance = videoUrl.split("/videos/watch/")[0];
                     }
 
-                    String uuid = parseUuidFromWatchUrl(v.getVideoUrl());
 
-                    if (uuid == null) {
+                    String thumb = null;
+                    String uuid = v.getUuid();
 
-                        VideoItem item = VideoItem.fromOnline(
-                                v.getName(),
-                                v.getVideoUrl(),
-                                v.getDuration() * 1000L,
-                                fullThumb
-                        );
-                        results.add(item);
-                        if (pending.decrementAndGet() == 0) {
-                            callback.onResult(results);
-                        }
-                        continue;
+                    if (uuid != null && !uuid.isEmpty()) {
+                        thumb = instance + "/static/previews/" + uuid + ".jpg";
                     }
 
-                    Call<VideoDetailsResponse> detailsCall = api.getVideoDetails(uuid);
-                    detailsCall.enqueue(new Callback<VideoDetailsResponse>() {
-                        @Override
-                        public void onResponse(Call<VideoDetailsResponse> call, Response<VideoDetailsResponse> response) {
-                            try {
-                                String fileUrl = null;
+                    Log.d("PT_DEBUG", "VIDEO: " + v.getName() +
+                            "\nvideoUrl: " + v.getVideoUrl() +
+                            "\nthumb: " + thumb);
 
-                                if (response.isSuccessful() && response.body() != null) {
-                                    VideoDetailsResponse body = response.body();
-
-                                    // streamingPlaylists -> first playlist -> files -> first file -> fileUrl
-                                    if (body.streamingPlaylists != null && !body.streamingPlaylists.isEmpty()) {
-                                        for (VideoDetailsResponse.StreamingPlaylist pl : body.streamingPlaylists) {
-                                            if (pl.files != null && !pl.files.isEmpty()) {
-                                                // prefer the first file that has a fileUrl
-                                                for (VideoDetailsResponse.FileEntry fe : pl.files) {
-                                                    if (fe != null && fe.fileUrl != null && !fe.fileUrl.trim().isEmpty()) {
-                                                        fileUrl = fe.fileUrl;
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                            if (fileUrl != null) break;
-                                        }
-                                    }
-
-                                    if (fileUrl == null && body.files != null && !body.files.isEmpty()) {
-                                        for (VideoDetailsResponse.FileEntry fe : body.files) {
-                                            if (fe != null && fe.fileUrl != null && !fe.fileUrl.trim().isEmpty()) {
-                                                fileUrl = fe.fileUrl;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-
-                                String playable = (fileUrl != null) ? fileUrl : v.getVideoUrl();
-
-                                VideoItem item = VideoItem.fromOnline(
-                                        v.getName(),
-                                        playable,
-                                        v.getDuration() * 1000L,
-                                        fullThumb
-                                );
-
-                                results.add(item);
-                            } catch (Exception ex) {
-                                ex.printStackTrace();
-
-                                VideoItem item = VideoItem.fromOnline(
-                                        v.getName(),
-                                        v.getVideoUrl(),
-                                        v.getDuration() * 1000L,
-                                        fullThumb
-                                );
-                                results.add(item);
-                            } finally {
-                                if (pending.decrementAndGet() == 0) {
-                                    callback.onResult(results);
-                                }
-                            }
-                        }
-
-                        @Override
-                        public void onFailure(Call<VideoDetailsResponse> call, Throwable t) {
-                            t.printStackTrace();
-
-                            VideoItem item = VideoItem.fromOnline(
+                    results.add(
+                            VideoItem.fromOnline(
                                     v.getName(),
                                     v.getVideoUrl(),
                                     v.getDuration() * 1000L,
-                                    fullThumb
-                            );
-                            results.add(item);
-                            if (pending.decrementAndGet() == 0) {
-                                callback.onResult(results);
-                            }
-                        }
-                    });
+                                    thumb
+                            )
+                    );
                 }
+
+                cb.onResult(results, total);
             }
 
             @Override
             public void onFailure(Call<PeerTubeResponse> call, Throwable t) {
-                Log.e("PeerTube", "Search failure: " + t.getMessage());
-                callback.onResult(new ArrayList<>());
+                Log.e("PEERTUBE_SEARCH", "Search failed: " + t.getMessage(), t);
+                cb.onResult(new ArrayList<>(), 0);
             }
         });
     }
 
+    public void resolveStreamUrl(String watchUrl, ResolveCallback cb) {
 
-    private String parseUuidFromWatchUrl(String url) {
-        if (url == null) return null;
+        Log.d(TAG, "REQUEST: " + watchUrl);
+
         try {
-            Uri u = Uri.parse(url);
-            List<String> segments = u.getPathSegments();
-            if (segments == null || segments.isEmpty()) return null;
+            if (!watchUrl.contains("/videos/watch/")) {
+                cb.onError(new IllegalArgumentException("Not a PeerTube watch URL"));
+                return;
+            }
 
-            for (int i = 0; i < segments.size(); i++) {
-                String s = segments.get(i);
-                if ("watch".equalsIgnoreCase(s) && i + 1 < segments.size()) {
-                    return segments.get(i + 1);
+            Uri uri = Uri.parse(watchUrl);
+            String instanceBase = uri.getScheme() + "://" + uri.getHost();
+
+            List<String> seg = uri.getPathSegments();
+            String id = null;
+
+            for (int i = 0; i < seg.size(); i++) {
+                if (seg.get(i).equals("watch") && i + 1 < seg.size()) {
+                    id = seg.get(i + 1);
+                    break;
                 }
             }
 
+            if (id == null) {
+                cb.onError(new RuntimeException("Cannot extract ID"));
+                return;
+            }
 
-            String last = segments.get(segments.size() - 1);
-            if (last != null && last.length() > 10) return last;
+            Retrofit dynRetrofit = new Retrofit.Builder()
+                    .baseUrl(instanceBase + "/api/v1/")
+                    .addConverterFactory(GsonConverterFactory.create())
+                    .build();
+
+            PeerTubeApi api = dynRetrofit.create(PeerTubeApi.class);
+
+            api.getVideoDetails(id).enqueue(new Callback<PeerTubeVideoDetails>() {
+                @Override
+                public void onResponse(Call<PeerTubeVideoDetails> call,
+                                       Response<PeerTubeVideoDetails> res) {
+
+                    if (!res.isSuccessful() || res.body() == null) {
+                        cb.onError(new RuntimeException("Details missing / invalid"));
+                        return;
+                    }
+
+                    PeerTubeVideoDetails details = res.body();
+
+                    List<PeerTubeVideoDetails.PeerTubeFile> files = details.getFiles();
+
+                    if (files != null && !files.isEmpty()) {
+
+                        PeerTubeVideoDetails.PeerTubeFile best = null;
+                        long bestScore = Long.MIN_VALUE;
+
+                        for (PeerTubeVideoDetails.PeerTubeFile f : files) {
+
+                            String u = f.getAnyUrl();
+                            if (u == null) continue;
+
+                            long score = 0;
+                            String low = u.toLowerCase(Locale.ROOT);
+
+                            if (low.endsWith(".mp4")) score += 50;
+                            if (low.endsWith(".webm")) score += 25;
+
+                            long br = f.getBitrate();
+                            if (br == 0) br = f.getSize();
+                            if (br > 200_000 && br < 3_000_000) score += 20;
+
+                            if (score > bestScore) {
+                                bestScore = score;
+                                best = f;
+                            }
+                        }
+
+                        if (best != null) {
+                            String abs = makeAbsolute(instanceBase, best.getAnyUrl());
+                            cb.onResolved(abs);
+                            return;
+                        }
+                    }
+
+
+                    List<PeerTubeStreaming> streams = details.getStreamingPlaylists();
+
+                    if (streams != null && !streams.isEmpty()) {
+                        for (PeerTubeStreaming s : streams) {
+                            String hls = s.getPlaylistUrl();
+                            if (hls == null) hls = s.getUrl();
+
+                            if (hls != null && hls.contains(".m3u8")) {
+                                cb.onResolved(makeAbsolute(instanceBase, hls));
+                                return;
+                            }
+                        }
+
+                        PeerTubeStreaming s0 = streams.get(0);
+                        String first = (s0.getPlaylistUrl() != null) ?
+                                s0.getPlaylistUrl() : s0.getUrl();
+
+                        if (first != null) {
+                            cb.onResolved(makeAbsolute(instanceBase, first));
+                            return;
+                        }
+                    }
+
+                    cb.onResolved(watchUrl + "/download");
+                }
+
+                @Override
+                public void onFailure(Call<PeerTubeVideoDetails> call, Throwable t) {
+                    cb.onError(t);
+                }
+            });
+
         } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return null;
-    }
-
-    public static class VideoDetailsResponse {
-
-        @com.google.gson.annotations.SerializedName("streamingPlaylists")
-        public List<StreamingPlaylist> streamingPlaylists;
-
-        @com.google.gson.annotations.SerializedName("files")
-        public List<FileEntry> files;
-
-        public static class StreamingPlaylist {
-            @com.google.gson.annotations.SerializedName("files")
-            public List<FileEntry> files;
-        }
-
-        public static class FileEntry {
-
-            @com.google.gson.annotations.SerializedName("fileUrl")
-            public String fileUrl;
-
-
-            @com.google.gson.annotations.SerializedName("url")
-            public String url;
-
-            @com.google.gson.annotations.SerializedName("downloadUrl")
-            public String downloadUrl;
+            cb.onError(e);
         }
     }
+
+    private String makeAbsolute(String instance, String url) {
+
+        if (url == null) return null;
+
+        if (url.startsWith("http://") || url.startsWith("https://"))
+            return url;
+
+        if (url.startsWith("/"))
+            return instance + url;
+
+        return instance + "/" + url;
+    }
+
 }

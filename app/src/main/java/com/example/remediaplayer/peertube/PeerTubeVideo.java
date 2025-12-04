@@ -31,4 +31,11 @@ public class PeerTubeVideo {
     public String getThumbnailPath() {
         return thumbnailPath;
     }
+
+    @SerializedName("uuid")
+    private String uuid;
+
+    public String getUuid() {
+        return uuid;
+    }
 }

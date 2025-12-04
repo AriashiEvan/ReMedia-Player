@@ -47,7 +47,7 @@ public class VideoLoader {
 
         String[] projection = {
                 MediaStore.Video.Media._ID,
-                MediaStore.Video.Media.DISPLAY_NAME,  // <— updated
+                MediaStore.Video.Media.DISPLAY_NAME,
                 MediaStore.Video.Media.DATA,
                 MediaStore.Video.Media.SIZE,
                 MediaStore.Video.Media.DURATION,
@@ -62,7 +62,7 @@ public class VideoLoader {
             while (c.moveToNext()) {
 
                 long id = c.getLong(0);
-                String title = c.getString(1);      // <— updated
+                String title = c.getString(1);
                 String path = c.getString(2);
                 long size = c.getLong(3);
                 long duration = c.getLong(4);
